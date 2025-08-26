@@ -1,20 +1,25 @@
+
 import os
 import requests
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
 )
-from flask import Flask, request
 
+# 🔑 Load from env
 # ✅ Use env var instead of hardcoding
 TOKEN = os.getenv("BOT_TOKEN", "AAHc75il2BECWK39tiPv4pVf-gZdPt4MFcw")
 APP_URL = os.getenv("APP_URL", "https://tart-berna-ravibots-bf0b1400.koyeb.app/")
 
-app = Flask(__name__)
+# Flask app
+flask_app = Flask(__name__)
+
+# Telegram application
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
-# 🔍 Multi-anime search
+# 🔍 Search anime
 def search_anime(query: str):
     url = "https://graphql.anilist.co"
     query_str = '''
@@ -65,26 +70,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+
     title_query = update.message.text.strip()
     results = search_anime(title_query)
+
     if not results:
         await update.message.reply_text("❌ Couldn't find any anime with that name.")
         return
 
     keyboard = [
-        [InlineKeyboardButton((anime["title"]["english"] or anime["title"]["romaji"]) + f" ({anime['format']})", 
+        [InlineKeyboardButton((anime["title"]["english"] or anime["title"]["romaji"]) + f" ({anime['format']})",
                               callback_data=str(anime["id"]))]
         for anime in results
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🎞 Select the correct anime format:", reply_markup=reply_markup)
 
-# 🔘 User taps on a button
+# 🔘 User taps a button
 async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     anime_id = int(query.data)
     anime = get_anime_by_id(anime_id)
+
     if not anime:
         await query.edit_message_text("❌ Couldn't load anime details.")
         return
@@ -106,6 +115,7 @@ async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{title} | {anime_type} | {episodes} | {studio} | {status} | "
         f"{genres} | {synopsis} | {cover_image} | {site_url} | {year}"
     )
+
     await query.edit_message_text(formatted)
 
 # ✅ Register handlers
@@ -113,18 +123,13 @@ telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 telegram_app.add_handler(CallbackQueryHandler(handle_selection))
 
-# 🌍 Flask route for webhook
-@app.route(f"/{TOKEN}", methods=["POST"])
+# 🌍 Flask webhook
+@flask_app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
     telegram_app.update_queue.put_nowait(update)
     return "ok", 200
 
-# 📌 Setup webhook automatically
-@app.route("/")
-def index():
-    telegram_app.bot.set_webhook(f"{APP_URL}/{TOKEN}")
-    return "Webhook set!", 200
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    flask_app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
