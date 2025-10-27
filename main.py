@@ -115,7 +115,6 @@ def get_anime_by_id(anime_id: int):
         print(f"Anime details error: {e}")
         return None
 
-# 📚 Get manga details - FIXED QUERY
 def get_manga_by_id(manga_id: int):
     url = "https://graphql.anilist.co"
     query_str = '''
@@ -132,8 +131,9 @@ def get_manga_by_id(manga_id: int):
         startDate {
           year
         }
-        staff(role: "Story & Art", sort: [RELEVANCE]) {
+        staff {
           edges {
+            role
             node {
               name {
                 full
@@ -142,7 +142,7 @@ def get_manga_by_id(manga_id: int):
           }
         }
         genres
-        description
+        description(asHtml: false)
         siteUrl
         isAdult
         coverImage {
@@ -329,43 +329,33 @@ async def handle_anime_selection(query, anime_id: int):
 
     await query.edit_message_text(formatted)
 
-# 📚 Handle manga selection - FIXED
+# 📚 Handle manga selection 
 async def handle_manga_selection(query, manga_id: int):
-    print(f"Fetching manga details for ID: {manga_id}")
     manga = get_manga_by_id(manga_id)
 
     if not manga:
-        print("Failed to get manga data")
         await query.edit_message_text("❌ Couldn't load manga details.")
         return
 
-    print(f"Manga data received: {manga['title']}")
-    
-    # Map format to the required type options
-    format_map = {
-        "MANGA": "MANGA",
-        "NOVEL": "NOVEL", 
-        "ONE_SHOT": "ONE_SHOT",
-        "MANHWA": "MANHWA",
-        "MANHUA": "MANHUA"
-    }
-    
     title = manga["title"]["english"] or manga["title"]["romaji"]
-    manga_type = format_map.get(manga.get("format", ""), manga.get("format", "N/A").upper())
+    manga_type = manga.get("format", "N/A").upper()
     chapters = manga.get("chapters", "N/A")
-    
-    # Fix for author - multiple ways to get author
+
+    # Extract author
     author = "N/A"
     if manga.get("staff") and manga["staff"].get("edges"):
-        author = manga["staff"]["edges"][0]["node"]["name"]["full"]
-    print(f"Author found: {author}")
-    
+        for edge in manga["staff"]["edges"]:
+            if "Story" in edge["role"]:
+                author = edge["node"]["name"]["full"]
+                break
+        else:
+            author = manga["staff"]["edges"][0]["node"]["name"]["full"]
+
     status = manga.get("status", "N/A").upper()
-    genres = ",".join(manga["genres"]) if manga["genres"] else "N/A"
+    genres = ", ".join(manga["genres"]) if manga["genres"] else "N/A"
     synopsis = manga.get("description", "").replace("<br>", "").replace("\n", " ").strip()
     if len(synopsis) > 150:
         synopsis = synopsis[:150].rsplit(" ", 1)[0] + "..."
-    # Using same cover image format as anime
     cover_image = f"https://img.anili.st/media/{manga['id']}"
     site_url = manga["siteUrl"]
     year = manga.get("startDate", {}).get("year", "N/A")
