@@ -107,13 +107,15 @@ def get_anime_by_id(anime_id: int):
     try:
         response = requests.post(url, json={"query": query_str, "variables": {"id": anime_id}})
         if response.status_code != 200:
+            print(f"Anime API error: {response.status_code}")
             return None
-        return response.json()["data"]["Media"]
+        data = response.json()
+        return data["data"]["Media"]
     except Exception as e:
         print(f"Anime details error: {e}")
         return None
 
-# 📚 Get manga details
+# 📚 Get manga details - FIXED QUERY
 def get_manga_by_id(manga_id: int):
     url = "https://graphql.anilist.co"
     query_str = '''
@@ -130,7 +132,7 @@ def get_manga_by_id(manga_id: int):
         startDate {
           year
         }
-        staff(role: "Story & Art") {
+        staff(role: "Story & Art", sort: [RELEVANCE]) {
           edges {
             node {
               name {
@@ -143,14 +145,22 @@ def get_manga_by_id(manga_id: int):
         description
         siteUrl
         isAdult
+        coverImage {
+          large
+        }
       }
     }
     '''
     try:
         response = requests.post(url, json={"query": query_str, "variables": {"id": manga_id}})
         if response.status_code != 200:
+            print(f"Manga API error: {response.status_code}, Response: {response.text}")
             return None
-        return response.json()["data"]["Media"]
+        data = response.json()
+        if "errors" in data:
+            print(f"GraphQL errors: {data['errors']}")
+            return None
+        return data["data"]["Media"]
     except Exception as e:
         print(f"Manga details error: {e}")
         return None
@@ -210,6 +220,11 @@ async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await handle_anime_selection(query, item_id)
             else:  # manga
                 await handle_manga_selection(query, item_id)
+    
+    elif data.startswith('type_back_'):
+        # Back to type selection
+        search_query = data.split('_', 2)[2]
+        await handle_back_to_type(query, search_query)
 
 # 🔍 Show search results with pagination
 async def show_search_results(query, media_type: str, search_query: str, page: int = 1):
@@ -277,12 +292,7 @@ async def show_search_results(query, media_type: str, search_query: str, page: i
         print(f"Error editing message: {e}")
 
 # 🔙 Handle back to type selection
-async def handle_back_to_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    search_query = query.data.split('_', 2)[2]
-    
+async def handle_back_to_type(query, search_query: str):
     keyboard = [
         [InlineKeyboardButton("🎬 Anime", callback_data=f"type_anime_{search_query}")],
         [InlineKeyboardButton("📚 Manga/Manhwa/Novel", callback_data=f"type_manga_{search_query}")]
@@ -319,14 +329,18 @@ async def handle_anime_selection(query, anime_id: int):
 
     await query.edit_message_text(formatted)
 
-# 📚 Handle manga selection
+# 📚 Handle manga selection - FIXED
 async def handle_manga_selection(query, manga_id: int):
+    print(f"Fetching manga details for ID: {manga_id}")
     manga = get_manga_by_id(manga_id)
 
     if not manga:
+        print("Failed to get manga data")
         await query.edit_message_text("❌ Couldn't load manga details.")
         return
 
+    print(f"Manga data received: {manga['title']}")
+    
     # Map format to the required type options
     format_map = {
         "MANGA": "MANGA",
@@ -340,10 +354,11 @@ async def handle_manga_selection(query, manga_id: int):
     manga_type = format_map.get(manga.get("format", ""), manga.get("format", "N/A").upper())
     chapters = manga.get("chapters", "N/A")
     
-    # Fix for author - using edges instead of nodes
+    # Fix for author - multiple ways to get author
     author = "N/A"
     if manga.get("staff") and manga["staff"].get("edges"):
         author = manga["staff"]["edges"][0]["node"]["name"]["full"]
+    print(f"Author found: {author}")
     
     status = manga.get("status", "N/A").upper()
     genres = ",".join(manga["genres"]) if manga["genres"] else "N/A"
@@ -370,4 +385,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_selection))
     
+    print("Bot is running...")
     app.run_polling()
