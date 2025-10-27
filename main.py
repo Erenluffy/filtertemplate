@@ -96,9 +96,6 @@ def get_anime_by_id(anime_id: int):
         genres
         description
         siteUrl
-        coverImage {
-          large
-        }
       }
     }
     '''
@@ -134,9 +131,6 @@ def get_manga_by_id(manga_id: int):
         genres
         description
         siteUrl
-        coverImage {
-          large
-        }
         isAdult
       }
     }
@@ -263,7 +257,12 @@ async def show_search_results(query, media_type: str, search_query: str, page: i
     await query.edit_message_text(message_text, reply_markup=reply_markup)
 
 # 🔙 Handle back to type selection
-async def handle_back_to_type(query, search_query: str):
+async def handle_back_to_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    search_query = query.data.split('_', 2)[2]
+    
     keyboard = [
         [InlineKeyboardButton("🎬 Anime", callback_data=f"type_anime_{search_query}")],
         [InlineKeyboardButton("📚 Manga/Manhwa/Novel", callback_data=f"type_manga_{search_query}")]
@@ -288,7 +287,8 @@ async def handle_anime_selection(query, anime_id: int):
     synopsis = anime.get("description", "").replace("<br>", "").replace("\n", " ").strip()
     if len(synopsis) > 150:
         synopsis = synopsis[:150].rsplit(" ", 1)[0] + "..."
-    cover_image = anime["coverImage"]["large"] if anime["coverImage"]["large"] else f"https://img.anili.st/media/{anime['id']}"
+    # Using your original cover image format
+    cover_image = f"https://img.anili.st/media/{anime['id']}"
     site_url = anime["siteUrl"]
     year = anime.get("startDate", {}).get("year", "N/A")
 
@@ -319,13 +319,19 @@ async def handle_manga_selection(query, manga_id: int):
     title = manga["title"]["english"] or manga["title"]["romaji"]
     manga_type = format_map.get(manga.get("format", ""), manga.get("format", "N/A").upper())
     chapters = manga.get("chapters", "N/A")
-    author = manga["staff"]["nodes"][0]["name"]["full"] if manga["staff"]["nodes"] else "N/A"
+    
+    # Fix for author - handle empty staff nodes
+    author = "N/A"
+    if manga.get("staff") and manga["staff"].get("nodes"):
+        author = manga["staff"]["nodes"][0]["name"]["full"]
+    
     status = manga.get("status", "N/A").upper()
     genres = ",".join(manga["genres"]) if manga["genres"] else "N/A"
     synopsis = manga.get("description", "").replace("<br>", "").replace("\n", " ").strip()
     if len(synopsis) > 150:
         synopsis = synopsis[:150].rsplit(" ", 1)[0] + "..."
-    cover_image = manga["coverImage"]["large"] if manga["coverImage"]["large"] else f"https://img.anili.st/media/{manga['id']}"
+    # Using same cover image format as anime
+    cover_image = f"https://img.anili.st/media/{manga['id']}"
     site_url = manga["siteUrl"]
     year = manga.get("startDate", {}).get("year", "N/A")
     adult = str(manga.get("isAdult", False)).lower()
@@ -345,9 +351,6 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(handle_selection, pattern="^(type_|page_|anime_|manga_)"))
     
     # Handle back button separately
-    app.add_handler(CallbackQueryHandler(lambda update, context: handle_back_to_type(
-        update.callback_query, 
-        update.callback_query.data.split('_', 2)[2]
-    ), pattern="^type_back_"))
+    app.add_handler(CallbackQueryHandler(handle_back_to_type, pattern="^type_back_"))
     
     app.run_polling()
