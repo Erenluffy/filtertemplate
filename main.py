@@ -7,9 +7,6 @@ from telegram.ext import (
 
 TOKEN = "7955482156:AAEyB3s_GkVxLjg8rHZNVJ6_neX8K9hsTnQ"
 
-# Store user selection temporarily
-user_selections = {}
-
 # 🔍 Multi-anime search with pagination
 def search_anime(query: str, page: int = 1):
     url = "https://graphql.anilist.co"
@@ -34,11 +31,15 @@ def search_anime(query: str, page: int = 1):
     }
     '''
     variables = {"search": query, "page": page}
-    response = requests.post(url, json={"query": query_str, "variables": variables})
-    if response.status_code != 200:
+    try:
+        response = requests.post(url, json={"query": query_str, "variables": variables})
+        if response.status_code != 200:
+            return [], None
+        data = response.json()["data"]["Page"]
+        return data["media"], data["pageInfo"]
+    except Exception as e:
+        print(f"Anime search error: {e}")
         return [], None
-    data = response.json()["data"]["Page"]
-    return data["media"], data["pageInfo"]
 
 # 🔍 Multi-manga search with pagination
 def search_manga(query: str, page: int = 1):
@@ -65,11 +66,15 @@ def search_manga(query: str, page: int = 1):
     }
     '''
     variables = {"search": query, "page": page}
-    response = requests.post(url, json={"query": query_str, "variables": variables})
-    if response.status_code != 200:
+    try:
+        response = requests.post(url, json={"query": query_str, "variables": variables})
+        if response.status_code != 200:
+            return [], None
+        data = response.json()["data"]["Page"]
+        return data["media"], data["pageInfo"]
+    except Exception as e:
+        print(f"Manga search error: {e}")
         return [], None
-    data = response.json()["data"]["Page"]
-    return data["media"], data["pageInfo"]
 
 # 🎯 Get anime details
 def get_anime_by_id(anime_id: int):
@@ -99,10 +104,14 @@ def get_anime_by_id(anime_id: int):
       }
     }
     '''
-    response = requests.post(url, json={"query": query_str, "variables": {"id": anime_id}})
-    if response.status_code != 200:
+    try:
+        response = requests.post(url, json={"query": query_str, "variables": {"id": anime_id}})
+        if response.status_code != 200:
+            return None
+        return response.json()["data"]["Media"]
+    except Exception as e:
+        print(f"Anime details error: {e}")
         return None
-    return response.json()["data"]["Media"]
 
 # 📚 Get manga details
 def get_manga_by_id(manga_id: int):
@@ -122,9 +131,11 @@ def get_manga_by_id(manga_id: int):
           year
         }
         staff(role: "Story & Art") {
-          nodes {
-            name {
-              full
+          edges {
+            node {
+              name {
+                full
+              }
             }
           }
         }
@@ -135,10 +146,14 @@ def get_manga_by_id(manga_id: int):
       }
     }
     '''
-    response = requests.post(url, json={"query": query_str, "variables": {"id": manga_id}})
-    if response.status_code != 200:
+    try:
+        response = requests.post(url, json={"query": query_str, "variables": {"id": manga_id}})
+        if response.status_code != 200:
+            return None
+        return response.json()["data"]["Media"]
+    except Exception as e:
+        print(f"Manga details error: {e}")
         return None
-    return response.json()["data"]["Media"]
 
 # 🚀 /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,6 +183,7 @@ async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data
+    print(f"Callback data received: {data}")  # Debug log
     
     if data.startswith('type_'):
         # User selected anime or manga type
@@ -183,11 +199,12 @@ async def handle_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             media_type, search_query, page_str = parts[1], parts[2], parts[3]
             await show_search_results(query, media_type, search_query, int(page_str))
     
-    else:
+    elif data.startswith('anime_') or data.startswith('manga_'):
         # User selected a specific title
         parts = data.split('_')
-        if len(parts) == 2:
-            media_type, item_id = parts[0], int(parts[1])
+        if len(parts) >= 2:
+            media_type = parts[0]
+            item_id = int(parts[1])
             
             if media_type == "anime":
                 await handle_anime_selection(query, item_id)
@@ -254,7 +271,10 @@ async def show_search_results(query, media_type: str, search_query: str, page: i
     if page_info and page_info['total']:
         message_text = f"🎞 Found {page_info['total']} {media_text} results for '{search_query}' (Page {page})"
     
-    await query.edit_message_text(message_text, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(message_text, reply_markup=reply_markup)
+    except Exception as e:
+        print(f"Error editing message: {e}")
 
 # 🔙 Handle back to type selection
 async def handle_back_to_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -320,10 +340,10 @@ async def handle_manga_selection(query, manga_id: int):
     manga_type = format_map.get(manga.get("format", ""), manga.get("format", "N/A").upper())
     chapters = manga.get("chapters", "N/A")
     
-    # Fix for author - handle empty staff nodes
+    # Fix for author - using edges instead of nodes
     author = "N/A"
-    if manga.get("staff") and manga["staff"].get("nodes"):
-        author = manga["staff"]["nodes"][0]["name"]["full"]
+    if manga.get("staff") and manga["staff"].get("edges"):
+        author = manga["staff"]["edges"][0]["node"]["name"]["full"]
     
     status = manga.get("status", "N/A").upper()
     genres = ",".join(manga["genres"]) if manga["genres"] else "N/A"
@@ -348,9 +368,6 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(handle_selection, pattern="^(type_|page_|anime_|manga_)"))
-    
-    # Handle back button separately
-    app.add_handler(CallbackQueryHandler(handle_back_to_type, pattern="^type_back_"))
+    app.add_handler(CallbackQueryHandler(handle_selection))
     
     app.run_polling()
